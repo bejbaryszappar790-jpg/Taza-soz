@@ -15,3 +15,4 @@ Here we will be creating our project
 
 ## API Документация
 Swagger UI доступен по адресу: `http://127.0.0.1:8000/docs`
+
