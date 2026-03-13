@@ -8,5 +8,5 @@ pytesseract
 Pillow
 python-docx
 python-multipart
+chromadb
 
- 
