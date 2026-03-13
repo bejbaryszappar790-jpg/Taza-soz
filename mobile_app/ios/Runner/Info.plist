@@ -72,5 +72,11 @@
     <string>Нам нужен доступ к галерее, чтобы вы могли выбирать фото для ИИ.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Доступ к микрофону может потребоваться для видео.</string>
+	<key>LSApplicationQueriesSchemes</key>
+<array>
+  <string>https</string>
+  <string>mailto</string>
+  <string>whatsapp</string>
+</array>
 </dict>
 </plist>
