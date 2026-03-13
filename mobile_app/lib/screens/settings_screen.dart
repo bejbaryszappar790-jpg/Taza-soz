@@ -9,13 +9,12 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // 1. Создаем переменную состояния для темы
+  // Состояние темной темы
   bool _isDarkMode = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 2. Меняем цвет фона в зависимости от состояния
       backgroundColor: _isDarkMode
           ? const Color(0xFF121212)
           : AppColors.background,
@@ -45,18 +44,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         children: [
           const SizedBox(height: 20),
-          _buildSectionTitle("Жалпы / Общее"),
 
-          // Элемент с переключателем темы
+          // РАЗДЕЛ ПРОФИЛЬ
+          _buildSectionTitle("Профиль"),
+          _buildSettingsTile(
+            icon: Icons.person_outline,
+            title: "Бейбарыс",
+            subtitle: "Менің деректерім / Мои данные",
+            onTap: () {},
+          ),
+          const SizedBox(height: 24),
+
+          // РАЗДЕЛ ОБЩЕЕ
+          _buildSectionTitle("Жалпы / Общее"),
+          _buildSettingsTile(
+            icon: Icons.language,
+            title: "Тіл / Язык",
+            subtitle: "Қазақша / Русский",
+            onTap: () {},
+          ),
           _buildSettingsTile(
             icon: Icons.dark_mode_outlined,
             title: "Қараңғы режим",
             subtitle: "Темная тема",
             trailing: Switch(
-              value: _isDarkMode, // Текущее значение
+              value: _isDarkMode,
               activeColor: AppColors.iconActive,
               onChanged: (bool value) {
-                // 3. САМОЕ ВАЖНОЕ: setState заставляет экран перерисоваться
                 setState(() {
                   _isDarkMode = value;
                 });
@@ -68,11 +82,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
               });
             },
           ),
+          _buildSettingsTile(
+            icon: Icons.notifications_none,
+            title: "Хабарландырулар",
+            subtitle: "Уведомления",
+            onTap: () {},
+          ),
+          const SizedBox(height: 24),
+
+          // РАЗДЕЛ ПОДДЕРЖКА
+          _buildSectionTitle("Қолдау / Поддержка"),
+          _buildSettingsTile(
+            icon: Icons.help_outline,
+            title: "Көмек орталығы",
+            subtitle: "Помощь",
+            onTap: () {},
+          ),
+          _buildSettingsTile(
+            icon: Icons.info_outline,
+            title: "Қосымша туралы",
+            subtitle: "О приложении",
+            onTap: () {},
+          ),
+
+          const SizedBox(height: 40),
+          Center(
+            child: TextButton(
+              onPressed: () {},
+              child: const Text(
+                "Шығу / Выйти",
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
       ),
     );
   }
 
+  // Вспомогательный виджет для заголовков секций
   Widget _buildSectionTitle(String title) {
     return Padding(
       padding: const EdgeInsets.only(left: 12, bottom: 8),
@@ -82,11 +134,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           fontSize: 12,
           fontWeight: FontWeight.bold,
           color: _isDarkMode ? Colors.white70 : AppColors.textSecondary,
+          letterSpacing: 1.2,
         ),
       ),
     );
   }
 
+  // Вспомогательный виджет для плиток настроек
   Widget _buildSettingsTile({
     required IconData icon,
     required String title,
@@ -110,7 +164,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: Text(
           title,
           style: TextStyle(
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w600, // Здесь была ошибка (обрыв кода)
             color: _isDarkMode ? Colors.white : Colors.black,
           ),
         ),
