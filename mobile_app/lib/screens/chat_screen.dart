@@ -1,3 +1,4 @@
+import 'settings_screen.dart';
 import 'dart:io'; // Добавь это
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -89,7 +90,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ... твой код AppBar и Scaffold остается таким же ...
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -105,8 +105,23 @@ class _ChatScreenState extends State<ChatScreen> {
             size: 20,
             color: AppColors.textPrimary,
           ),
-          onPressed: () {},
+          onPressed: () {
+            // Если хочешь, чтобы стрелочка назад работала:
+            Navigator.pop(context);
+          },
         ),
+        // ВОТ ЭТО МЫ ДОБАВИЛИ:
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.more_horiz, color: AppColors.textPrimary),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
