@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+<key>NSCameraUsageDescription</key>
+    <string>Нам нужен доступ к камере, чтобы вы могли делать фото для ИИ.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Нам нужен доступ к галерее, чтобы вы могли выбирать фото для ИИ.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Доступ к микрофону может потребоваться для видео.</string>
 </dict>
 </plist>
