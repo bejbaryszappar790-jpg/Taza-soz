@@ -1,7 +1,10 @@
+import 'dart:io'; // Добавь это
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart'; // Добавь это
 import '../theme/app_theme.dart';
 import '../widgets/chat_bubble.dart';
+import '../services/api_service.dart'; // Добавь это
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -12,18 +15,39 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
+  final ImagePicker _picker = ImagePicker(); // Контроллер камеры
+
   final List<Map<String, dynamic>> _messages = [
     {
       "role": "ai",
       "text":
-          "Сәлем! Мен Taza Soz-бын. Құжатты жүктеңіз, мен оны қарапайым тілмен түсіндіріп беремін.",
+          "Сәлем! Мен Taza Soz-бын. Құжатты жүктеңіз немесе фото жіберіңіз.",
     },
     {
       "role": "ai",
-      "text":
-          "Привет! Я Taza Soz. Загрузите документ, и я объясню его простым языком.",
+      "text": "Привет! Я Taza Soz. Загрузите документ или отправьте фото.",
     },
   ];
+
+  // Функция для камеры
+  Future<void> _takePhoto() async {
+    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+
+    if (photo != null) {
+      File imageFile = File(photo.path);
+
+      setState(() {
+        _messages.add({"role": "user", "text": "📸 Фото отправлено"});
+      });
+
+      // Отправляем фото на сервер
+      String response = await ApiService.uploadImage(imageFile);
+
+      setState(() {
+        _messages.add({"role": "ai", "text": response});
+      });
+    }
+  }
 
   Future<void> _pickDocument() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -45,20 +69,29 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _sendMessage() {
-    if (_controller.text.trim().isNotEmpty) {
+  // ОБНОВЛЕННАЯ ОТПРАВКА ТЕКСТА
+  void _sendMessage() async {
+    String text = _controller.text.trim();
+    if (text.isNotEmpty) {
       setState(() {
-        _messages.add({"role": "user", "text": _controller.text.trim()});
+        _messages.add({"role": "user", "text": text});
         _controller.clear();
+      });
+
+      // Ждем ответ от нашего сервиса
+      String aiResponse = await ApiService.sendMessage(text);
+
+      setState(() {
+        _messages.add({"role": "ai", "text": aiResponse});
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // ... твой код AppBar и Scaffold остается таким же ...
     return Scaffold(
       backgroundColor: AppColors.background,
-      // Чистый AppBar без разделителей
       appBar: AppBar(
         title: Text(
           "Taza Soz AI",
@@ -72,25 +105,17 @@ class _ChatScreenState extends State<ChatScreen> {
             size: 20,
             color: AppColors.textPrimary,
           ),
-          onPressed: () {}, // Заглушка
+          onPressed: () {},
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_horiz, color: AppColors.textPrimary),
-            onPressed: () {}, // Заглушка
-          ),
-        ],
       ),
       body: Column(
         children: [
-          // Область чата
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              reverse: true, // Новые сообщения снизу
+              reverse: true,
               itemCount: _messages.length,
               itemBuilder: (context, index) {
-                // Из-за reverse: true инвертируем индекс
                 final msg = _messages[_messages.length - 1 - index];
                 return ChatBubble(
                   text: msg["text"]!,
@@ -99,7 +124,6 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-          // Панель ввода (Супер-скругленная, как на Dribbble)
           _buildInputPanel(),
         ],
       ),
@@ -108,10 +132,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildInputPanel() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 20), // Больше отступ снизу
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
       decoration: BoxDecoration(
         color: AppColors.background,
-        // Легкая тень сверху панели
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.02),
@@ -125,35 +148,38 @@ class _ChatScreenState extends State<ChatScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: AppColors.background,
-            borderRadius: BorderRadius.circular(32), // Максимальное скругление
+            borderRadius: BorderRadius.circular(32),
             border: Border.all(color: AppColors.inputBorder),
           ),
           child: Row(
             children: [
-              // Кнопка скрепки с подсветкой при нажатии
               IconButton(
                 icon: const Icon(
                   Icons.add,
                   color: AppColors.iconActive,
                   size: 28,
                 ),
-                splashRadius: 24, // Радиус подсветки
                 onPressed: _pickDocument,
               ),
-              // Поле ввода
+              // НОВАЯ КНОПКА КАМЕРЫ
+              IconButton(
+                icon: const Icon(
+                  Icons.camera_alt_outlined,
+                  color: AppColors.iconActive,
+                  size: 24,
+                ),
+                onPressed: _takePhoto,
+              ),
               Expanded(
                 child: TextField(
                   controller: _controller,
-                  style: Theme.of(context).textTheme.bodyLarge,
                   decoration: const InputDecoration(
                     hintText: "Ask anything...",
-                    hintStyle: TextStyle(color: AppColors.textSecondary),
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.symmetric(horizontal: 12),
                   ),
                 ),
               ),
-              // Кнопка отправки (Круглая, синяя)
               Container(
                 margin: const EdgeInsets.only(left: 8),
                 decoration: const BoxDecoration(
@@ -166,7 +192,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     color: Colors.white,
                     size: 20,
                   ),
-                  splashRadius: 24,
                   onPressed: _sendMessage,
                 ),
               ),
