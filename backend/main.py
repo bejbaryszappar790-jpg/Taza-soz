@@ -4,260 +4,224 @@ import io
 import asyncio
 import logging
 import json
-import hashlib
+import re
 import time
-import re  
-from typing import List, Optional
+import hashlib
+from typing import List, Dict, Optional, Any
 from pathlib import Path
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-import pytesseract
 import pdfplumber
+import pytesseract
 from PIL import Image
-from docx import Document
+import docx
+from chromadb.utils import embedding_functions
 import chromadb
-import numpy as np
-from sentence_transformers import SentenceTransformer
 from langchain_ollama import OllamaLLM
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-# --- Конфигурация ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# --- НАСТРОЙКИ ---
+class Config:
+    CHUNK_SIZE = 600
+    OVERLAP = 100
+    RELEVANCE_THRESHOLD = 0.3
+    LLM_MODEL = "qwen2.5:3b"  # Быстрая версия
+    # ДЛЯ MAC: '/opt/homebrew/bin/tesseract'
+    # ДЛЯ WINDOWS: r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    TESSERACT_PATH = '/opt/homebrew/bin/tesseract' 
+    ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.jpg', '.jpeg', '.png'}
 
-CHUNK_SIZE = 2000
-OVERLAP = 400
-MAX_FILE_SIZE = 50 * 1024 * 1024
-RELEVANCE_THRESHOLD = 0.3
-LLM_TIMEOUT = 90
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("LegalAI")
 
-# Инициализация
-app = FastAPI(title="Legal AI Assistant")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(title="Legal AI Platform API", description="MVP для юридического анализа документов")
 
-llm_executor = ThreadPoolExecutor(max_workers=3)
-model = OllamaLLM(model="qwen2.5", temperature=0.1)
-client = chromadb.PersistentClient(path="./db_storage")
-collection = client.get_or_create_collection(name="law_docs")
+# Разрешаем фронтенду подключаться
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-pytesseract.pytesseract.tesseract_cmd = os.getenv('TESSERACT_PATH', '/opt/homebrew/bin/tesseract')
+# Проверка Tesseract
+if os.path.exists(Config.TESSERACT_PATH):
+    pytesseract.pytesseract.tesseract_cmd = Config.TESSERACT_PATH
 
-# --- Pydantic модели ---
+# База данных и Эмбеддинги
+embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="intfloat/multilingual-e5-small")
+chroma_client = chromadb.PersistentClient(path="./db_storage")
+collection = chroma_client.get_or_create_collection(name="legal_docs_v1", embedding_function=embedding_fn)
+
+# Инициализация LLM
+llm = OllamaLLM(
+    model=Config.LLM_MODEL,
+    temperature=0.1,
+    num_ctx=3072,
+    num_gpu=1,
+    num_thread=8
+)
+
+# Кеш в памяти (для скорости конкурса)
+response_cache = {}
+
+# --- МОДЕЛИ ДАННЫХ ДЛЯ SWAGGER ---
+class LegalResponse(BaseModel):
+    summary: str
+    risks: List[Any] = []
+    deadlines: List[Any] = []
+    sources: List[Source] = []
+    processing_time: float
 class ChatRequest(BaseModel):
-    document_id: str
-    question: str
-    language: str = "ru"
+    document_id: str = Field(..., example="uuid-от-вашего-файла")
+    question: str = Field(..., example="Какие основные риски в этом договоре?")
 
-class ChatResponse(BaseModel):
-    answer: dict
-    cached: bool = False
+class Source(BaseModel):
+    page: int
+    text_preview: str
+    relevance: float
 
-# --- Кэш ---
-class ResponseCache:
-    def __init__(self, maxsize=100):
-        self.cache = {}
-        self.maxsize = maxsize
-    
-    def _key(self, doc_id: str, q: str) -> str:
-        return hashlib.md5(f"{doc_id}:{q.lower().strip()}".encode()).hexdigest()
-    
-    def get(self, doc_id: str, q: str):
-        return self.cache.get(self._key(doc_id, q))
-    
-    def set(self, doc_id: str, q: str, ans: dict):
-        if len(self.cache) >= self.maxsize:
-            self.cache.pop(next(iter(self.cache)))
-        self.cache[self._key(doc_id, q)] = ans
-
-cache = ResponseCache()
-
-# --- Rate Limiter ---
-class RateLimiter:
-    def __init__(self, requests_per_minute: int = 10):
-        self.rate = requests_per_minute
-        self.requests = {}
-    
-    def is_allowed(self, ip: str) -> bool:
-        now = time.time()
-        minute_ago = now - 60
-        
-        if ip in self.requests:
-            self.requests[ip] = [ts for ts in self.requests[ip] if ts > minute_ago]
-            if len(self.requests[ip]) >= self.rate:
-                return False
-        else:
-            self.requests[ip] = []
-        
-        self.requests[ip].append(now)
-        return True
-
-rate_limiter = RateLimiter()
-
-# --- Утилиты ---
-def parse_llm_response(response: str) -> dict:
-    """Парсит ответ LLM в JSON"""
+# --- ЛОГИКА ПАРСИНГА ---
+def extract_text(content: bytes, ext: str) -> List[Dict]:
+    pages = []
     try:
-        # Очищаем от markdown
-        clean = re.sub(r'```json|```', '', response).strip()
-        return json.loads(clean)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM response: {response[:200]}")
-        return {
-            "summary": response[:500],
-            "risks": ["Ошибка парсинга JSON"],
-            "legal_basis": [],
-            "obligations": [],
-            "deadlines": [],
-            "disclaimer": "Ответ не в требуемом формате JSON"
-        }
-
-def extract_text(content: bytes, ext: str) -> str:
-    """Извлекает текст из файла"""
-    try:
-        if ext == ".pdf":
+        if ext == '.pdf':
             with pdfplumber.open(io.BytesIO(content)) as pdf:
-                return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-        elif ext in [".docx", ".doc"]:
-            return "\n".join([p.text for p in Document(io.BytesIO(content)).paragraphs])
-        elif ext in [".jpg", ".jpeg", ".png"]:
-            return pytesseract.image_to_string(Image.open(io.BytesIO(content)), lang='rus+kaz')
+                for i, p in enumerate(pdf.pages[:10]): # Лимит 10 стр для скорости
+                    txt = p.extract_text() or ""
+                    if not txt.strip(): # Если пусто — это скан, включаем OCR
+                        txt = pytesseract.image_to_string(p.to_image().original, lang='rus+kaz')
+                    pages.append({"page": i+1, "text": txt})
+        elif ext in {'.jpg', '.jpeg', '.png'}:
+            txt = pytesseract.image_to_string(Image.open(io.BytesIO(content)), lang='rus+kaz')
+            pages.append({"page": 1, "text": txt})
+        elif ext == '.docx':
+            doc = docx.Document(io.BytesIO(content))
+            pages.append({"page": 1, "text": "\n".join([p.text for p in doc.paragraphs])})
     except Exception as e:
-        logger.error(f"Extraction error: {e}")
-        raise HTTPException(status_code=400, detail="Ошибка обработки файла")
-    return ""
+        logger.error(f"Error parsing {ext}: {e}")
+    return pages
 
-# --- Эндпоинты ---
-@app.get("/health")
-async def health_check():
-    """Проверка здоровья сервиса"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "documents_count": collection.count()
-    }
-
-@app.post("/upload")
+# --- ЭНДПОИНТЫ ---
+@app.post("/upload", tags=["Upload"])
 async def upload_document(file: UploadFile = File(...)):
-    """Загрузка документа"""
+    ext = Path(file.filename).suffix.lower()
+    if ext not in Config.ALLOWED_EXTENSIONS:
+        raise HTTPException(400, "Формат не поддерживается")
+    
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large")
+    pages = extract_text(content, ext)
     
-    text = extract_text(content, Path(file.filename).suffix.lower())
-    if not text or len(text.strip()) < 50:
-        raise HTTPException(status_code=400, detail="Текст не распознан")
-    
+    if not pages:
+        raise HTTPException(400, "Не удалось извлечь текст")
+
     doc_id = str(uuid.uuid4())
-    chunks = [text[i:i + CHUNK_SIZE] for i in range(0, len(text), CHUNK_SIZE - OVERLAP)]
-    
-    # Добавляем с метаданными
-    collection.add(
-        documents=chunks,
-        ids=[f"{doc_id}_{i}" for i in range(len(chunks))],
-        metadatas=[{
-            "doc_id": doc_id,
-            "chunk_index": i,
-            "total_chunks": len(chunks),
-            "filename": file.filename,
-            "upload_time": datetime.now().isoformat()
-        } for i in range(len(chunks))]
-    )
-    
-    logger.info(f"Document {doc_id} uploaded with {len(chunks)} chunks")
-    return {"id": doc_id, "status": "ready", "chunks": len(chunks)}
+    chunks, ids, metas = [], [], []
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat_with_document(request: Request, chat_request: ChatRequest):
-    """Чат с документом"""
-    # Rate limiting
-    if not rate_limiter.is_allowed(request.client.host):
-        raise HTTPException(status_code=429, detail="Too many requests")
+    for p in pages:
+        text = p['text']
+        for i in range(0, len(text), Config.CHUNK_SIZE - Config.OVERLAP):
+            chunk = text[i:i+Config.CHUNK_SIZE]
+            if len(chunk.strip()) < 40: continue
+            
+            chunk_id = f"{doc_id}_p{p['page']}_{i}"
+            chunks.append(chunk)
+            ids.append(chunk_id)
+            metas.append({"doc_id": doc_id, "page": p['page'], "text_preview": chunk[:150]})
+
+    collection.add(documents=chunks, ids=ids, metadatas=metas)
+    return {"document_id": doc_id, "filename": file.filename, "pages_count": len(pages)}
+@app.post("/chat", response_model=LegalResponse, tags=["AI Chat"])
+async def chat_with_document(req: ChatRequest):
+    start_time = time.time()
     
-    # Проверка кэша
-    cached = cache.get(chat_request.document_id, chat_request.question)
-    if cached:
-        logger.info(f"Cache hit for: {chat_request.question[:50]}")
-        return {"answer": cached, "cached": True}
+    # --- ШАГ 1: ОПРЕДЕЛЯЕМ ЯЗЫК ВОПРОСА ---
+    # Ищем специфичные казахские буквы
+    kazakh_letters = set("әғқңөұүһіӘҒҚҢӨҰҮҺІ")
+    is_kazakh = any(char in kazakh_letters for char in req.question)
+    target_lang = "KAZAKH" if is_kazakh else "RUSSIAN"
     
-    # Проверка документа
-    doc_check = collection.get(where={"doc_id": chat_request.document_id}, limit=1)
-    if not doc_check['ids']:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # Поиск релевантных чанков
+    logger.info(f"Detected language: {target_lang}")
+
+    # --- ШАГ 2: КЭШ ---
+    cache_key = hashlib.md5(f"{req.document_id}:{req.question}".encode()).hexdigest()
+    if cache_key in response_cache:
+        cached_data = response_cache[cache_key]
+        cached_data.processing_time = round(time.time() - start_time, 2)
+        return cached_data
+
+    # --- ШАГ 3: ПОИСК КОНТЕКСТА ---
     results = collection.query(
-        query_texts=[chat_request.question],
-        where={"doc_id": chat_request.document_id},
-        n_results=5,
-        include=["documents", "distances"]
+        query_texts=[req.question],
+        where={"doc_id": req.document_id},
+        n_results=3
     )
-    
-    docs = results['documents'][0]
-    dists = results['distances'][0]
-    
-    # Фильтрация по релевантности
-    similarities = [1 / (1 + dist) for dist in dists]
-    relevant = [doc for doc, sim in zip(docs, similarities) if sim > RELEVANCE_THRESHOLD]
-    
-    if not relevant:
-        return {
-            "answer": {
-                "summary": "В документе не найдено релевантной информации",
-                "risks": [],
-                "legal_basis": [],
-                "obligations": [],
-                "deadlines": [],
-                "disclaimer": "Проверьте вопрос или загрузите другой документ"
-            },
-            "cached": False
-        }
-    
-    # Запрос к LLM
-    context = "\n".join(relevant)
-    prompt = f"""You are a professional Legal AI Assistant. 
-Analyze the provided document context and answer the user's question accurately. 
-If the answer is not in the context, return "мәлімет жоқ" or "информация отсутствует".
 
-Rules:
-1. Respond strictly in JSON format.
-2. If language is Kazakh, use formal, professional legal terminology.
-3. Base answers ONLY on the context.
+    if not results['documents'][0]:
+        raise HTTPException(404, "Документ не найден")
 
-Context:
-{context}
+    context_text = "\n".join(results['documents'][0])
+    sources = [
+        Source(
+            page=results['metadatas'][0][i]['page'],
+            text_preview=results['metadatas'][0][i]['text_preview'],
+            relevance=round(1/(1+results['distances'][0][i]), 2)
+        ) for i in range(len(results['documents'][0]))
+    ]
 
-Question: {chat_request.question}
-
-Output Format (JSON):
-{{
-    "summary": "...",
-    "risks": ["..."],
-    "legal_basis": ["..."],
-    "obligations": ["..."],
-    "deadlines": ["..."],
-    "disclaimer": "..."
-}}
-"""
+    # --- ШАГ 4: ГИБКИЙ ПРОМПТ ---
+    # Мы явно приказываем ИИ использовать нужный язык
+    prompt = f"""You are a professional legal expert.
+    TASK: Answer the question based on the context.
     
+    STRICT RULE: You MUST answer ONLY in {target_lang} language. 
+    If target language is KAZAKH, use legal Kazakh terms (e.g., 'Заң', 'Тарап', 'Мерзімі').
+    
+    Return ONLY JSON:
+    {{
+        "summary": "Full answer in {target_lang}",
+        "risks": [{{ "desc": "description in {target_lang}", "level": "high/medium/low" }}],
+        "deadlines": []
+    }}
+
+    CONTEXT:
+    {context_text[:1500]}
+    
+    QUESTION: {req.question}
+    
+    JSON RESPONSE IN {target_lang}:"""
+
     try:
-        loop = asyncio.get_event_loop()
-        answer = await asyncio.wait_for(
-            loop.run_in_executor(llm_executor, model.invoke, prompt),
-            timeout=LLM_TIMEOUT
+        raw_ai_response = await asyncio.wait_for(llm.ainvoke(prompt), timeout=120.0)
+        
+        data = {"summary": raw_ai_response, "risks": [], "deadlines": []}
+        try:
+            clean_json_match = re.search(r'\{.*\}', raw_ai_response, re.DOTALL)
+            if clean_json_match:
+                parsed = json.loads(clean_json_match.group())
+                if isinstance(parsed, dict):
+                    data.update(parsed)
+        except:
+            pass
+
+        final_response = LegalResponse(
+            summary=str(data.get("summary", "Ошибка")),
+            risks=data.get("risks") if isinstance(data.get("risks"), list) else [],
+            deadlines=data.get("deadlines") if isinstance(data.get("deadlines"), list) else [],
+            sources=sources,
+            processing_time=round(time.time() - start_time, 2)
         )
         
-        parsed = parse_llm_response(answer)
-        cache.set(chat_request.document_id, chat_request.question, parsed)
-        
-        return {"answer": parsed, "cached": False}
-        
-    except asyncio.TimeoutError:
-        logger.error(f"LLM timeout for doc {chat_request.document_id}")
-        raise HTTPException(status_code=504, detail="LLM timeout")
+        response_cache[cache_key] = final_response
+        return final_response
+
+    except Exception as e:
+        logger.error(f"AI Error: {e}")
+        return LegalResponse(summary=f"Error: {e}", sources=sources, processing_time=0)
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
