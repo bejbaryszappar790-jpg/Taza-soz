@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart'; // Для WhatsApp и Email
+import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final String initialLanguage;
+  const SettingsScreen({super.key, this.initialLanguage = "Русский"});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -11,31 +12,29 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isDarkMode = false;
-  bool _notificationsEnabled = true; // Оживили уведомления
-  String _userName = "Бейбарыс"; // Имя теперь переменная
-  String _currentLanguage = "Русский"; // Состояние языка
+  bool _notificationsEnabled = true;
+  String _userName = "Бейбарыс";
+  late String _currentLanguage;
 
-  // Функция для WhatsApp
-  Future<void> _launchWhatsApp() async {
-    final Uri url = Uri.parse("https://wa.me/77718559377");
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      debugPrint("Could not launch WhatsApp");
+  @override
+  void initState() {
+    super.initState();
+    _currentLanguage = widget.initialLanguage;
+  }
+
+  // НОВАЯ ФУНКЦИЯ ДЛЯ TELEGRAM
+  Future<void> _launchTelegram() async {
+    // Замени 'tazasoz_bot' на реальный username твоего бота, когда создашь его
+    final Uri url = Uri.parse("https://t.me/tazasoz_bot");
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        debugPrint("Could not launch Telegram");
+      }
+    } catch (e) {
+      debugPrint("Telegram Error: $e");
     }
   }
 
-  // Функция для Почты
-  Future<void> _launchEmail() async {
-    final Uri emailLaunchUri = Uri(
-      scheme: 'mailto',
-      path: 'arailymalimurat@gmail.com',
-      queryParameters: {'subject': 'Taza Soz Support'},
-    );
-    if (!await launchUrl(emailLaunchUri)) {
-      debugPrint("Could not launch Email");
-    }
-  }
-
-  // Функция смены имени через диалоговое окно
   void _editName() {
     TextEditingController nameController = TextEditingController(
       text: _userName,
@@ -43,22 +42,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Изменить имя"),
+        title: Text(
+          _currentLanguage == "Русский" ? "Изменить имя" : "Атты өзгерту",
+        ),
         content: TextField(
           controller: nameController,
-          decoration: const InputDecoration(hintText: "Введите ваше имя"),
+          decoration: InputDecoration(
+            hintText: _currentLanguage == "Русский"
+                ? "Введите имя"
+                : "Есіміңізді енгізіңіз",
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Отмена"),
+            child: Text(_currentLanguage == "Русский" ? "Отмена" : "Бас тарту"),
           ),
           TextButton(
             onPressed: () {
-              setState(() => _userName = nameController.text);
+              if (nameController.text.trim().isNotEmpty) {
+                setState(() => _userName = nameController.text);
+              }
               Navigator.pop(context);
             },
-            child: const Text("Сохранить"),
+            child: Text(_currentLanguage == "Русский" ? "Сохранить" : "Сақтау"),
           ),
         ],
       ),
@@ -72,6 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? const Color(0xFF121212)
           : AppColors.background,
       appBar: AppBar(
+        centerTitle: true,
         title: Text(
           _currentLanguage == "Русский" ? "Настройки" : "Баптаулар",
           style: TextStyle(
@@ -89,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             size: 20,
             color: _isDarkMode ? Colors.white : AppColors.textPrimary,
           ),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, _currentLanguage),
         ),
       ),
       body: ListView(
@@ -102,8 +110,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSettingsTile(
             icon: Icons.person_outline,
             title: _userName,
-            subtitle: "Нажмите, чтобы изменить имя",
-            onTap: _editName, // Теперь можно менять имя
+            subtitle: _currentLanguage == "Русский"
+                ? "Нажмите, чтобы изменить"
+                : "Атыңызды өзгерту үшін басыңыз",
+            onTap: _editName,
           ),
           const SizedBox(height: 24),
 
@@ -113,28 +123,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: "Тіл / Язык",
             subtitle: _currentLanguage,
             onTap: () {
-              setState(() {
-                _currentLanguage = _currentLanguage == "Русский"
+              setState(
+                () => _currentLanguage = _currentLanguage == "Русский"
                     ? "Қазақша"
-                    : "Русский";
-              });
+                    : "Русский",
+              );
             },
           ),
           _buildSettingsTile(
-            icon: Icons.dark_mode_outlined,
-            title: "Темная тема",
-            subtitle: "Қараңғы режим",
-            trailing: Switch(
-              value: _isDarkMode,
-              activeColor: AppColors.iconActive,
-              onChanged: (v) => setState(() => _isDarkMode = v),
-            ),
-            onTap: () => setState(() => _isDarkMode = !_isDarkMode),
-          ),
-          _buildSettingsTile(
-            icon: Icons.notifications_none,
-            title: "Уведомления",
-            subtitle: _notificationsEnabled ? "Включены" : "Выключены",
+            icon: Icons.notifications_none_outlined,
+            title: _currentLanguage == "Русский"
+                ? "Уведомления"
+                : "Хабарландырулар",
+            subtitle: _notificationsEnabled ? "On" : "Off",
             trailing: Switch(
               value: _notificationsEnabled,
               activeColor: AppColors.iconActive,
@@ -143,37 +144,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () =>
                 setState(() => _notificationsEnabled = !_notificationsEnabled),
           ),
+          _buildSettingsTile(
+            icon: Icons.dark_mode_outlined,
+            title: _currentLanguage == "Русский"
+                ? "Темная тема"
+                : "Қараңғы режим",
+            subtitle: _isDarkMode ? "On" : "Off",
+            trailing: Switch(
+              value: _isDarkMode,
+              activeColor: AppColors.iconActive,
+              onChanged: (v) => setState(() => _isDarkMode = v),
+            ),
+            onTap: () => setState(() => _isDarkMode = !_isDarkMode),
+          ),
           const SizedBox(height: 24),
 
           _buildSectionTitle(
             _currentLanguage == "Русский" ? "Поддержка" : "Қолдау",
           ),
+          // ТЕПЕРЬ ТУТ TELEGRAM
           _buildSettingsTile(
-            icon: Icons.chat_outlined,
-            title: "WhatsApp",
-            subtitle: "+7 771 855 9377",
-            onTap: _launchWhatsApp, // Открывает WhatsApp
-          ),
-          _buildSettingsTile(
-            icon: Icons.email_outlined,
-            title: "Email",
-            subtitle: "arailymalimurat@gmail.com",
-            onTap: _launchEmail, // Открывает почту
+            icon: Icons.send_rounded, // Иконка, похожая на самолетик Telegram
+            title: "Telegram Bot",
+            subtitle: _currentLanguage == "Русский"
+                ? "Написать в поддержку"
+                : "Қолдау қызметіне жазу",
+            onTap: _launchTelegram,
           ),
           const SizedBox(height: 40),
           Center(
             child: TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                "Выйти / Шығу",
-                style: TextStyle(
+              onPressed: () => Navigator.pop(context, _currentLanguage),
+              child: Text(
+                _currentLanguage == "Русский" ? "Выйти / Шығу" : "Шығу",
+                style: const TextStyle(
                   color: Colors.redAccent,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 20),
         ],
       ),
     );
@@ -229,7 +239,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         trailing:
             trailing ??
-            const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            const Icon(
+              Icons.chevron_right,
+              color: AppColors.textSecondary,
+              size: 20,
+            ),
         onTap: onTap,
       ),
     );

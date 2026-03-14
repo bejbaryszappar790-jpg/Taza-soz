@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'theme/app_theme.dart'; // Наша тема
-import 'screens/chat_screen.dart'; // Наш экран
+// Используй относительный путь, если package-импорт не сработал:
+import './theme/app_theme.dart';
+import './screens/chat_screen.dart';
 
 void main() {
   runApp(const TazaSozApp());
@@ -14,9 +15,9 @@ class TazaSozApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Taza Soz',
-      // Подключаем профессиональную тему
       theme: AppTheme.lightTheme,
-      home: const ChatScreen(),
+      // Мы убрали const, это правильно
+      home: ChatScreen(),
     );
   }
 }
