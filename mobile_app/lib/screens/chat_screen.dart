@@ -2,14 +2,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
-// Импортируем настройки и тему
 import 'settings_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/chat_bubble.dart';
 import '../services/api_service.dart';
 
 class ChatScreen extends StatefulWidget {
-  // Конструктор должен быть таким, чтобы main.dart не ругался
   const ChatScreen({super.key});
 
   @override
@@ -20,10 +18,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ImagePicker _picker = ImagePicker();
 
-  // Состояние языка (по умолчанию)
   String _currentLanguage = "Русский";
 
-  // Твои сообщения (прогресс сохранен)
+  // Серверден келетін құжаттың ID-і осы жерде сақталады
+  String? _currentDocId;
+
   final List<Map<String, dynamic>> _messages = [
     {
       "role": "ai",
@@ -36,7 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
     },
   ];
 
-  // Функция для камеры (прогресс сохранен)
+  // 1. Фото арқылы талдау
   Future<void> _takePhoto() async {
     final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
     if (photo != null) {
@@ -44,51 +43,99 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages.add({"role": "user", "text": "📸 Фото отправлено"});
       });
-      String response = await ApiService.uploadImage(imageFile);
-      setState(() {
-        _messages.add({"role": "ai", "text": response});
-      });
+
+      // Жаңа ApiService.uploadDocument қолданамыз
+      var result = await ApiService.uploadDocument(imageFile);
+
+      if (result.containsKey('document_id')) {
+        _currentDocId = result['document_id'];
+        setState(() {
+          _messages.add({
+            "role": "ai",
+            "text": _currentLanguage == "Русский"
+                ? "Фото получено! Теперь можете задавать вопросы."
+                : "Фото қабылданды! Енді сұрақтар қоя аласыз.",
+          });
+        });
+      } else {
+        _showError(result['error'] ?? "Ошибка загрузки");
+      }
     }
   }
 
-  // Функция для документов (прогресс сохранен)
+  // 2. Құжат (PDF/Doc) жүктеу
   Future<void> _pickDocument() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'doc', 'docx', 'txt'],
     );
+
     if (result != null) {
+      File file = File(result.files.single.path!);
       setState(() {
         _messages.add({
           "role": "user",
           "text": "📎 Файл: ${result.files.single.name}",
         });
+      });
+
+      var uploadResult = await ApiService.uploadDocument(file);
+
+      if (uploadResult.containsKey('document_id')) {
+        _currentDocId = uploadResult['document_id'];
+        setState(() {
+          _messages.add({
+            "role": "ai",
+            "text": _currentLanguage == "Русский"
+                ? "Документ проанализирован. Что вы хотите узнать?"
+                : "Құжат талданды. Не білгіңіз келеді?",
+          });
+        });
+      } else {
+        _showError(uploadResult['error'] ?? "Ошибка");
+      }
+    }
+  }
+
+  // 3. ИИ-мен чат
+  void _sendMessage() async {
+    String text = _controller.text.trim();
+    if (text.isNotEmpty) {
+      if (_currentDocId == null) {
+        _showError(
+          _currentLanguage == "Русский"
+              ? "Сначала загрузите документ!"
+              : "Алдымен құжатты жүктеңіз!",
+        );
+        return;
+      }
+
+      setState(() {
+        _messages.add({"role": "user", "text": text});
+        _controller.clear();
+      });
+
+      // Жаңа ApiService.chatWithAI қолданамыз
+      var aiResponse = await ApiService.chatWithAI(_currentDocId!, text);
+
+      setState(() {
         _messages.add({
           "role": "ai",
-          "text": _currentLanguage == "Русский"
-              ? "Документ принят. Дайте мне пару секунд..."
-              : "Құжат қабылданды. Талдау жасауға бірнеше секунд беріңіз...",
+          "text": aiResponse['summary'] ?? "Кешіріңіз, жауап ала алмадым.",
         });
       });
     }
   }
 
-  void _sendMessage() async {
-    String text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      setState(() {
-        _messages.add({"role": "user", "text": text});
-        _controller.clear();
-      });
-      String aiResponse = await ApiService.sendMessage(text);
-      setState(() {
-        _messages.add({"role": "ai", "text": aiResponse});
-      });
-    }
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    // build бөлімі өзгеріссіз қалады...
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -105,7 +152,6 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.more_horiz, color: AppColors.textPrimary),
             onPressed: () async {
-              // ПЕРЕДАЕМ текущий язык в настройки и ЖДЕМ результат назад
               final result = await Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -113,12 +159,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       SettingsScreen(initialLanguage: _currentLanguage),
                 ),
               );
-
-              // Если язык в настройках изменили, обновляем главный экран
               if (result != null && result is String) {
-                setState(() {
-                  _currentLanguage = result;
-                });
+                setState(() => _currentLanguage = result);
               }
             },
           ),
@@ -175,7 +217,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: TextField(
                   controller: _controller,
                   decoration: InputDecoration(
-                    // ВОТ ТУТ ЯЗЫК МЕНЯЕТСЯ АВТОМАТИЧЕСКИ
                     hintText: _currentLanguage == "Русский"
                         ? "Спросите о чем угодно..."
                         : "Сұрағыңызды жазыңыз...",
