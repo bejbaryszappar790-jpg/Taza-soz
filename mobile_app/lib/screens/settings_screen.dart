@@ -4,7 +4,13 @@ import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
   final String initialLanguage;
-  const SettingsScreen({super.key, this.initialLanguage = "Русский"});
+  final String initialName; // Есімді сырттан қабылдау үшін қостық
+
+  const SettingsScreen({
+    super.key,
+    this.initialLanguage = "Русский",
+    this.initialName = "Бейбарыс", // Бастапқы есім
+  });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -13,18 +19,23 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isDarkMode = false;
   bool _notificationsEnabled = true;
-  String _userName = "Бейбарыс";
+  late String _userName; // widget-тен келетін мәнге теңестіреміз
   late String _currentLanguage;
 
   @override
   void initState() {
     super.initState();
     _currentLanguage = widget.initialLanguage;
+    _userName = widget
+        .initialName; // Экран ашылғанда ChatScreen-нен келген есімді қоямыз
   }
 
-  // НОВАЯ ФУНКЦИЯ ДЛЯ TELEGRAM
+  // Жабылғанда деректерді қайтару функциясы
+  void _goBack() {
+    Navigator.pop(context, {'language': _currentLanguage, 'name': _userName});
+  }
+
   Future<void> _launchTelegram() async {
-    // Замени 'tazasoz_bot' на реальный username твоего бота, когда создашь его
     final Uri url = Uri.parse("https://t.me/tazasoz_bot");
     try {
       if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
@@ -97,7 +108,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             size: 20,
             color: _isDarkMode ? Colors.white : AppColors.textPrimary,
           ),
-          onPressed: () => Navigator.pop(context, _currentLanguage),
+          onPressed: _goBack, // Осы жерді ауыстырдық
         ),
       ),
       body: ListView(
@@ -116,20 +127,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: _editName,
           ),
           const SizedBox(height: 24),
-
           _buildSectionTitle(_currentLanguage == "Русский" ? "Общее" : "Жалпы"),
           _buildSettingsTile(
             icon: Icons.language,
             title: "Тіл / Язык",
             subtitle: _currentLanguage,
-            onTap: () {
-              setState(
-                () => _currentLanguage = _currentLanguage == "Русский"
-                    ? "Қазақша"
-                    : "Русский",
-              );
-            },
+            onTap: () => setState(
+              () => _currentLanguage = _currentLanguage == "Русский"
+                  ? "Қазақша"
+                  : "Русский",
+            ),
           ),
+          // Хабарландырулар мен Қараңғы режим бөлімдері өзгеріссіз...
           _buildSettingsTile(
             icon: Icons.notifications_none_outlined,
             title: _currentLanguage == "Русский"
@@ -158,13 +167,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => setState(() => _isDarkMode = !_isDarkMode),
           ),
           const SizedBox(height: 24),
-
           _buildSectionTitle(
             _currentLanguage == "Русский" ? "Поддержка" : "Қолдау",
           ),
-          // ТЕПЕРЬ ТУТ TELEGRAM
           _buildSettingsTile(
-            icon: Icons.send_rounded, // Иконка, похожая на самолетик Telegram
+            icon: Icons.send_rounded,
             title: "Telegram Bot",
             subtitle: _currentLanguage == "Русский"
                 ? "Написать в поддержку"
@@ -174,7 +181,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 40),
           Center(
             child: TextButton(
-              onPressed: () => Navigator.pop(context, _currentLanguage),
+              onPressed: _goBack, // Осы жерді ауыстырдық
               child: Text(
                 _currentLanguage == "Русский" ? "Выйти / Шығу" : "Шығу",
                 style: const TextStyle(
@@ -189,6 +196,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // _buildSectionTitle және _buildSettingsTile өзгеріссіз қалады...
   Widget _buildSectionTitle(String title) {
     return Padding(
       padding: const EdgeInsets.only(left: 12, bottom: 8),

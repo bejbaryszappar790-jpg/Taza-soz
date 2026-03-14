@@ -18,17 +18,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ImagePicker _picker = ImagePicker();
 
+  // Деректерді ChatScreen деңгейінде сақтаймыз (Бұл біздің прогресс)
   String _currentLanguage = "Русский";
+  String _userName = "Бейбарыс";
 
-  // Серверден келетін құжаттың ID-і осы жерде сақталады
   String? _currentDocId;
+  bool _isLoading = false;
 
   final List<Map<String, dynamic>> _messages = [
-    {
-      "role": "ai",
-      "text":
-          "Сәлем! Мен Taza Soz-бын. Құжатты жүктеңіз немесе фото жіберіңіз.",
-    },
     {
       "role": "ai",
       "text": "Привет! Я Taza Soz. Загрузите документ или отправьте фото.",
@@ -39,31 +36,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _takePhoto() async {
     final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
     if (photo != null) {
-      File imageFile = File(photo.path);
-      setState(() {
-        _messages.add({"role": "user", "text": "📸 Фото отправлено"});
-      });
-
-      // Жаңа ApiService.uploadDocument қолданамыз
-      var result = await ApiService.uploadDocument(imageFile);
-
-      if (result.containsKey('document_id')) {
-        _currentDocId = result['document_id'];
-        setState(() {
-          _messages.add({
-            "role": "ai",
-            "text": _currentLanguage == "Русский"
-                ? "Фото получено! Теперь можете задавать вопросы."
-                : "Фото қабылданды! Енді сұрақтар қоя аласыз.",
-          });
-        });
-      } else {
-        _showError(result['error'] ?? "Ошибка загрузки");
-      }
+      _processFile(File(photo.path), "📸 Фото отправлено");
     }
   }
 
-  // 2. Құжат (PDF/Doc) жүктеу
+  // 2. Құжат жүктеу
   Future<void> _pickDocument() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -71,60 +48,76 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (result != null) {
-      File file = File(result.files.single.path!);
-      setState(() {
-        _messages.add({
-          "role": "user",
-          "text": "📎 Файл: ${result.files.single.name}",
-        });
-      });
+      _processFile(
+        File(result.files.single.path!),
+        "📎 Файл: ${result.files.single.name}",
+      );
+    }
+  }
 
-      var uploadResult = await ApiService.uploadDocument(file);
+  // Файлды серверге жіберу
+  Future<void> _processFile(File file, String userMessage) async {
+    setState(() {
+      _messages.add({"role": "user", "text": userMessage});
+      _isLoading = true;
+    });
 
-      if (uploadResult.containsKey('document_id')) {
-        _currentDocId = uploadResult['document_id'];
-        setState(() {
-          _messages.add({
-            "role": "ai",
-            "text": _currentLanguage == "Русский"
-                ? "Документ проанализирован. Что вы хотите узнать?"
-                : "Құжат талданды. Не білгіңіз келеді?",
-          });
-        });
+    try {
+      var result = await ApiService.uploadDocument(file);
+      if (result.containsKey('document_id')) {
+        _currentDocId = result['document_id'];
+        _addAiMessage(
+          _currentLanguage == "Русский"
+              ? "Документ получен! Теперь можете задавать вопросы."
+              : "Құжат қабылданды! Енді сұрақтар қоя аласыз.",
+        );
       } else {
-        _showError(uploadResult['error'] ?? "Ошибка");
+        _showError(result['error'] ?? "Ошибка загрузки");
       }
+    } catch (e) {
+      _showError("Ошибка связи с сервером");
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
   // 3. ИИ-мен чат
   void _sendMessage() async {
     String text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      if (_currentDocId == null) {
-        _showError(
-          _currentLanguage == "Русский"
-              ? "Сначала загрузите документ!"
-              : "Алдымен құжатты жүктеңіз!",
-        );
-        return;
-      }
+    if (text.isEmpty) return;
 
-      setState(() {
-        _messages.add({"role": "user", "text": text});
-        _controller.clear();
-      });
-
-      // Жаңа ApiService.chatWithAI қолданамыз
-      var aiResponse = await ApiService.chatWithAI(_currentDocId!, text);
-
-      setState(() {
-        _messages.add({
-          "role": "ai",
-          "text": aiResponse['summary'] ?? "Кешіріңіз, жауап ала алмадым.",
-        });
-      });
+    if (_currentDocId == null) {
+      _showError(
+        _currentLanguage == "Русский"
+            ? "Сначала загрузите документ!"
+            : "Алдымен құжатты жүктеңіз!",
+      );
+      return;
     }
+
+    setState(() {
+      _messages.add({"role": "user", "text": text});
+      _controller.clear();
+      _isLoading = true;
+    });
+
+    try {
+      var aiResponse = await ApiService.chatWithAI(_currentDocId!, text);
+      _addAiMessage(
+        aiResponse['summary'] ??
+            (aiResponse['error'] ?? "Кешіріңіз, қате шықты."),
+      );
+    } catch (e) {
+      _showError("Ошибка сервера");
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _addAiMessage(String text) {
+    setState(() {
+      _messages.add({"role": "ai", "text": text});
+    });
   }
 
   void _showError(String message) {
@@ -135,32 +128,36 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // build бөлімі өзгеріссіз қалады...
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        // МІНЕ, ОСЫ ЖЕРДІ ӨЗГЕРТТІК: ${_userName} АЛЫП ТАСТАЛДЫ
         title: const Text(
           "Taza Soz AI",
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: AppColors.background,
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.more_horiz, color: AppColors.textPrimary),
+            icon: const Icon(Icons.more_horiz),
             onPressed: () async {
               final result = await Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) =>
-                      SettingsScreen(initialLanguage: _currentLanguage),
+                  builder: (context) => SettingsScreen(
+                    initialLanguage: _currentLanguage,
+                    initialName: _userName,
+                  ),
                 ),
               );
-              if (result != null && result is String) {
-                setState(() => _currentLanguage = result);
+
+              // Кері қайтқанда деректерді қабылдаймыз (бұл да прогресс)
+              if (result != null && result is Map) {
+                setState(() {
+                  _currentLanguage = result['language'] ?? _currentLanguage;
+                  _userName = result['name'] ?? _userName;
+                });
               }
             },
           ),
@@ -170,7 +167,7 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.all(16),
               reverse: true,
               itemCount: _messages.length,
               itemBuilder: (context, index) {
@@ -182,6 +179,11 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
           _buildInputPanel(),
         ],
       ),
@@ -191,26 +193,17 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildInputPanel() {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-      color: AppColors.background,
       child: SafeArea(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: AppColors.background,
             borderRadius: BorderRadius.circular(32),
             border: Border.all(color: AppColors.inputBorder),
           ),
           child: Row(
             children: [
+              IconButton(icon: const Icon(Icons.add), onPressed: _pickDocument),
               IconButton(
-                icon: const Icon(Icons.add, color: AppColors.iconActive),
-                onPressed: _pickDocument,
-              ),
-              IconButton(
-                icon: const Icon(
-                  Icons.camera_alt_outlined,
-                  color: AppColors.iconActive,
-                ),
+                icon: const Icon(Icons.camera_alt_outlined),
                 onPressed: _takePhoto,
               ),
               Expanded(
@@ -218,19 +211,23 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: _controller,
                   decoration: InputDecoration(
                     hintText: _currentLanguage == "Русский"
-                        ? "Спросите о чем угодно..."
-                        : "Сұрағыңызды жазыңыз...",
+                        ? "Спросите..."
+                        : "Сұраңыз...",
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                   ),
                 ),
               ),
-              CircleAvatar(
-                backgroundColor: AppColors.iconActive,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_upward, color: Colors.white),
-                  onPressed: _sendMessage,
+              IconButton(
+                icon: const CircleAvatar(
+                  backgroundColor: AppColors.iconActive,
+                  child: Icon(
+                    Icons.arrow_upward,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
+                onPressed: _sendMessage,
               ),
             ],
           ),
